@@ -8,16 +8,19 @@ namespace MediaServer
         static private string[] fileArray;
         static string path;
 
-        public AvailableMedia(string path)
-        {
+        public AvailableMedia(string path) {
             path = path.ToLower();
-            if (AvailableMedia.path == null || !AvailableMedia.path.Equals(path))
-            {
+            if(AvailableMedia.path == null || !AvailableMedia.path.Equals(path)) {
                 AvailableMedia.path = path;
-                fileArray = Directory.GetFiles(path, "*.mp3", SearchOption.AllDirectories).Union(Directory.GetFiles(path, "*.mp4", SearchOption.AllDirectories)).ToArray();
-                //TODO: ADD jpg, png, and gif to the fileArray 
+                fileArray = Directory.GetFiles(path,"*.mp3",SearchOption.AllDirectories)
+                    .Union(Directory.GetFiles(path,"*.mp4",SearchOption.AllDirectories))
+                    .Union(Directory.GetFiles(path,"*.jpg",SearchOption.AllDirectories))
+                    .Union(Directory.GetFiles(path,"*.png",SearchOption.AllDirectories))
+                    .Union(Directory.GetFiles(path,"*.gif",SearchOption.AllDirectories))
+                    .ToArray();
             }
         }
+
         public IEnumerable<string> getAvailableFiles()
         {
             return fileArray;

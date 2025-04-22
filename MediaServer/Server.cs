@@ -60,28 +60,28 @@ namespace MediaServer
             if (socServer != null && socServer.Connected) socServer.Shutdown(SocketShutdown.Both);
         }
 
-		//TODO: Finish Implementation
+        //TODO: Finish Implementation
         /// <summary>
         /// This method listens for requests
         /// Use the pattern found at https://learn.microsoft.com/en-us/dotnet/api/system.net.sockets.socketasynceventargs?view=net-9.0
         /// The Start method at the link is our Listen method   
         /// </summary>
-        private void Listen()
-        {
-            SocketAsyncEventArgs e = new SocketAsyncEventArgs();
-            e.Completed += AcceptCallback;
+        private void Listen() {
+            while(this.running) {
+                SocketAsyncEventArgs e = new SocketAsyncEventArgs();
+                e.Completed += AcceptCallback;
+                e.AcceptSocket = null; // Ensure it's reset before accepting
 
-            bool pending = false;
-            while (this.running && !pending)
-            {
-                Console.WriteLine("Waiting connection ...");
+                Console.WriteLine("Waiting for a connection...");
                 maxNumberAcceptedClients.WaitOne();
-                
-				//TODO: You probably want to do something here
 
-                
+                bool willRaiseEvent = socServer.AcceptAsync(e);
+                if(!willRaiseEvent) {
+                    AcceptCallback(this,e);
+                }
             }
-        }       
+        }
+
 
         /// <summary>
         /// Accepts the request and starts to process it on a new thread
@@ -189,16 +189,15 @@ namespace MediaServer
                 }
             }
         }
-        
+
         //TODO: Finish implementation
         /// <summary>
         /// This method takes the raw request splits it based on end of line, and returns each line in a string array
         /// </summary>
         /// <param name="request">The raw request</param>
         /// <returns>A string array with each cell being a line in the request</returns>
-        private string[] GetRequestLines(string request)
-        {
-
+        private string[] GetRequestLines(string request) {
+            return request.Split(new string[] { "\r\n","\n" },StringSplitOptions.RemoveEmptyEntries);
         }
 
         //TODO: Implement
@@ -207,9 +206,15 @@ namespace MediaServer
         /// </summary>
         /// <param name="requestLines">The request lines</param>
         /// <returns>Key Value Pair containing the method as a key and the path as the value</returns>
-        private KeyValuePair<string, string> GetMethodAndPath(string[] requestLines)
-        {
-  
+        private KeyValuePair<string,string> GetMethodAndPath(string[] requestLines) {
+            if(requestLines.Length == 0)
+                return new KeyValuePair<string,string>("","");
+
+            string[] methodParts = requestLines[0].Split(' ');
+            if(methodParts.Length < 2)
+                return new KeyValuePair<string,string>("","");
+
+            return new KeyValuePair<string,string>(methodParts[0],methodParts[1]);
         }
 
         //TODO: Implement
@@ -218,16 +223,15 @@ namespace MediaServer
         /// </summary>
         /// <param name="requestLines">The request as a string array</param>
         /// <returns>List of key value pairs where the each header name is key and their contents is their value</returns>
-        private List<KeyValuePair<string,string>> GetHeaders(string[] requestLines)
-        {
-            
-            try
+        private List<KeyValuePair<string,string>> GetHeaders(string[] requestLines) {
+            List<KeyValuePair<string,string>> headers = new List<KeyValuePair<string,string>>();
+
+            for(int i = 1;i < requestLines.Length;i++) // Skipping the first line (method and path)
             {
-                
-            }
-            catch(Exception ex) 
-            {
-                logger.LogCritical(ex,"Exception getting headers");
+                string[] headerParts = requestLines[i].Split(new char[] { ':' },2);
+                if(headerParts.Length == 2) {
+                    headers.Add(new KeyValuePair<string,string>(headerParts[0].Trim(),headerParts[1].Trim()));
+                }
             }
 
             return headers;
@@ -253,20 +257,27 @@ namespace MediaServer
         /// <param name="handler"></param>
         /// <param name="headers"></param>
         /// <param name="path"></param>
-        private void HandleHead(Socket handler, List<KeyValuePair<string, string>> headers, string path)
-        {
+        private void HandleHead(Socket handler,List<KeyValuePair<string,string>> headers,string path) {
             int index = GetIndexFromPath(path);
-            String requestFile = availableMedia.getAbsolutePath(index);
+            string requestFile = availableMedia.getAbsolutePath(index);
 
-            logger.LogDebug("GET requested for file: {0}", requestFile);
+            logger.LogDebug("HEAD requested for file: {0}",requestFile);
 
             FileInfo fileInfo = new FileInfo(requestFile);
-            if (fileInfo.Exists)
-            {
-			
-				//TODO: You probably want to do something here
-
+            if(!fileInfo.Exists) {
+                CloseClientSocket(handler);
+                return;
             }
+
+            StringBuilder response = new StringBuilder();
+            response.Append("HTTP/1.1 200 OK\r\n");
+            response.Append($"Content-Length: {fileInfo.Length}\r\n");
+            response.Append($"Content-Type: application/octet-stream\r\n");
+            response.Append("\r\n");
+
+            byte[] headerBytes = Encoding.UTF8.GetBytes(response.ToString());
+            handler.Send(headerBytes);
+
             CloseClientSocket(handler);
         }
 
@@ -294,30 +305,30 @@ namespace MediaServer
         /// 
         /// </summary>
         /// <param name="handler">The socket to write the webpage to</param>
-        private void ReturnList(Socket handler)
-        {
+        private void ReturnList(Socket handler) {
             string template = File.ReadAllText("template.txt");
-            string media = "";
+            StringBuilder mediaBuilder = new StringBuilder();
             string[] files = availableMedia.getAvailableFiles().ToArray();
 
-            //TODO: You probably want to do something here
+            for(int i = 0;i < files.Length;i++) {
+                string fileName = Path.GetFileName(files[i]); // Ensure root path is hidden
+                mediaBuilder.AppendFormat("<li><a href=\"/{0}\">{1}</a></li>",i,fileName);
+            }
+
+            string finalContent = template.Replace("{{MEDIA_LIST}}",mediaBuilder.ToString());
 
             string ContentType = "text/html";
-            string Reply = "HTTP/1.1 200 OK" + Environment.NewLine + "Server: VLC" + Environment.NewLine + "Content-Type: " + ContentType + Environment.NewLine;
-            Reply += "Last-Modified: " + GMTTime(DateTime.Now) + Environment.NewLine;//Just dream up a date
-            Reply += "Date: " + GMTTime(DateTime.Now) + Environment.NewLine;
-            Reply += "Accept-Ranges: bytes" + Environment.NewLine;
-            UTF8Encoding encoding = new UTF8Encoding();
-            byte[] bytes = encoding.GetBytes(template);
-            long length = bytes.Length;
-            Reply += "Content-Length: " + length + Environment.NewLine;
-            Reply += "Connection: close" + Environment.NewLine + Environment.NewLine;
-            handler.Send(UTF8Encoding.UTF8.GetBytes(Reply), SocketFlags.None);
+            string Reply = $"HTTP/1.1 200 OK\r\nServer: VLC\r\nContent-Type: {ContentType}\r\n";
+            Reply += $"Last-Modified: {GMTTime(DateTime.Now)}\r\nDate: {GMTTime(DateTime.Now)}\r\nAccept-Ranges: bytes\r\n";
+            byte[] bytes = Encoding.UTF8.GetBytes(finalContent);
+            Reply += $"Content-Length: {bytes.Length}\r\nConnection: close\r\n\r\n";
+
+            handler.Send(Encoding.UTF8.GetBytes(Reply),SocketFlags.None);
             handler.Send(bytes);
             CloseClientSocket(handler);
         }
 
-		//TODO: Finish implementation
+        //TODO: Finish implementation
         /// <summary>
         /// This method determines if to stream a file or send it in its entirety.
         /// </summary>
@@ -344,15 +355,14 @@ namespace MediaServer
             else
                 tempRange = 0;
             FileSenderHeler fsHelper = new FileSenderHeler(requestFile, handler, tempRange);
-            if (!hasRange || requestFile.ToLower().EndsWith(".jpg") || requestFile.ToLower().EndsWith(".png") || requestFile.ToLower().EndsWith(".gif") || requestFile.ToLower().EndsWith(".mp3"))
-            {
-                //TODO: ? hint: must use fsHelper
+            if(!hasRange || IsMusicOrImage(requestFile)) {
+                Thread fileSendThread = new Thread(NoRangeSend);
+                fileSendThread.Start(fsHelper);
+            } else {
+                Thread streamThread = new Thread(SendWithRange);
+                streamThread.Start(fsHelper);
             }
-            else
-            {
-                //Probably a large file
-                //TODO: ? hint: must use fsHelper
-            }
+
         }
 
         //TODO: Finish implementation
@@ -360,36 +370,36 @@ namespace MediaServer
         /// Sends entire file to requestor since it is small
         /// </summary>
         /// <param name="fsHelperObj">Helper object containing data relevant for thread execution</param>
-        private void NoRangeSend(object fsHelperObj)
-        {//Here we just send the file without using ranges and this function runs in it's own thread
+        private void NoRangeSend(object fsHelperObj) {
             FileSenderHeler fsHelper = (FileSenderHeler)fsHelperObj;
             Socket handler = fsHelper.getSocket();
-            String requestFile = fsHelper.getRequestFile();
-            FileStream fsFile = null;
-            long chunkSize = 50000;
-            long bytesSent = 0;
-        
-            string ContentType = GetContentType(requestFile.ToLower());
-            logger.LogDebug("Sending file: {0}", requestFile);
+            string requestFile = fsHelper.getRequestFile();
 
-            if (!File.Exists(requestFile)) { handler.Close(); return; }
-            FileInfo fInfo = new FileInfo(requestFile);
-            if (fInfo.Length > 8000000)
-                chunkSize = 500000;//Looks big like a movie so increase the chunk size
-            string Reply = "HTTP/1.1 200 OK" + Environment.NewLine + "Server: VLC" + Environment.NewLine + "Content-Type: " + ContentType + Environment.NewLine;
-            Reply += "Connection: close" + Environment.NewLine;
-            Reply += "Content-Length: " + fInfo.Length + Environment.NewLine + Environment.NewLine;
-
-            fsFile = new FileStream(requestFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            fsFile.Seek(0, SeekOrigin.Begin);
-
-            handler.Send(UTF8Encoding.UTF8.GetBytes(Reply), SocketFlags.None);
-            while (this.running && handler.Connected && chunkSize > 0)
-            {
-			
-				//TODO: You probably want to do something here
+            if(!File.Exists(requestFile)) {
+                handler.Close();
+                return;
             }
-            fsFile.Close();
+
+            string ContentType = GetContentType(requestFile.ToLower());
+            FileInfo fInfo = new FileInfo(requestFile);
+            long chunkSize = fInfo.Length > 8000000 ? 500000 : 50000; // Adjust chunk size for large files
+            long bytesSent = 0;
+
+            string Reply = $"HTTP/1.1 200 OK\r\nServer: VLC\r\nContent-Type: {ContentType}\r\n";
+            Reply += $"Connection: close\r\nContent-Length: {fInfo.Length}\r\n\r\n";
+
+            handler.Send(Encoding.UTF8.GetBytes(Reply),SocketFlags.None);
+
+            using(FileStream fsFile = new FileStream(requestFile,FileMode.Open,FileAccess.Read,FileShare.ReadWrite)) {
+                byte[] buffer = new byte[chunkSize];
+                int bytesRead;
+
+                while(this.running && handler.Connected && (bytesRead = fsFile.Read(buffer,0,buffer.Length)) > 0) {
+                    handler.Send(buffer,bytesRead,SocketFlags.None);
+                    bytesSent += bytesRead;
+                }
+            }
+
             CloseClientSocket(handler);
         }
 
@@ -398,36 +408,37 @@ namespace MediaServer
         /// Streams a movie to the requestors size they are too big to go all at once
         /// </summary>
         /// <param name="fsHelperObj">Helper object containing data relevant for thread execution</param>
-        private void SendWithRange(object fsHelperObj)
-        {//Streams a movie using ranges and runs on it's own thread
+        private void SendWithRange(object fsHelperObj) {
             FileSenderHeler fsHelper = (FileSenderHeler)fsHelperObj;
             Socket handler = fsHelper.getSocket();
-            String requestFile = fsHelper.getRequestFile();
+            string requestFile = fsHelper.getRequestFile();
 
-            logger.LogDebug("Streaming movie: {0}", requestFile);
+            logger.LogDebug("Streaming movie: {0}",requestFile);
 
             long chunkSize = 500000;
-            long range = fsHelper.getRange(); //get range from the request
+            long range = fsHelper.getRange(); // Get requested range from client
             long bytesSent = 0;
-            long byteToSend = 1;
-            
-            
+
             string ContentType = GetContentType(requestFile.ToLower());
             FileInfo fInfo = new FileInfo(requestFile);
             long fileLength = fInfo.Length;
-            FileStream fs = new FileStream(requestFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
-            string reply = ContentString(range, ContentType, fileLength);
-            handler.Send(UTF8Encoding.UTF8.GetBytes(reply), SocketFlags.None);
-            byte[] buf = new byte[chunkSize];
-            if (fs.CanSeek)
-                fs.Seek(range, SeekOrigin.Begin);
-            bytesSent = range;
-            while (this.running && handler.Connected && byteToSend > 0)
-            {
-                //TODO: You probably want to do something here
+            using(FileStream fs = new FileStream(requestFile,FileMode.Open,FileAccess.Read,FileShare.ReadWrite)) {
+                if(fs.CanSeek)
+                    fs.Seek(range,SeekOrigin.Begin);
+
+                string reply = ContentString(range,ContentType,fileLength);
+                handler.Send(Encoding.UTF8.GetBytes(reply),SocketFlags.None);
+
+                byte[] buf = new byte[chunkSize];
+                int bytesRead;
+
+                while(this.running && handler.Connected && (bytesRead = fs.Read(buf,0,buf.Length)) > 0) {
+                    handler.Send(buf,bytesRead,SocketFlags.None);
+                    bytesSent += bytesRead;
+                }
             }
-            if (!this.running) { try { fs.Close(); fs = null; } catch {; } }
+
             CloseClientSocket(handler);
         }
 
