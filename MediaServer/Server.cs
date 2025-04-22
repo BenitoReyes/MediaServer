@@ -175,11 +175,9 @@ namespace MediaServer
                     sb.Append(String.Format("{0}:{1}"+Environment.NewLine, pair.Key, pair.Value));
                 }
                 logger.LogDebug(sb.ToString());
-                if (methodAndPath.Key.Equals(""))
-                {
-                    HandleHead(handler, headers, methodAndPath.Value);
-                }
-                else if (methodAndPath.Key.Equals(" "))
+                if(methodAndPath.Key.Equals("HEAD",StringComparison.OrdinalIgnoreCase)) {
+                    HandleHead(handler,headers,methodAndPath.Value);
+                } else if (methodAndPath.Key.Equals("GET",StringComparison.OrdinalIgnoreCase))
                 {
                     HandleGet(handler, headers, methodAndPath.Value);
                 }
