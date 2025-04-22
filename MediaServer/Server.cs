@@ -313,7 +313,7 @@ namespace MediaServer
                 mediaBuilder.AppendFormat("<li><a href=\"/{0}\">{1}</a></li>",i,fileName);
             }
 
-            string finalContent = template.Replace("{{MEDIA_LIST}}",mediaBuilder.ToString());
+            string finalContent = template.Replace("<<data>>",mediaBuilder.ToString());
 
             string ContentType = "text/html";
             string Reply = $"HTTP/1.1 200 OK\r\nServer: VLC\r\nContent-Type: {ContentType}\r\n";
